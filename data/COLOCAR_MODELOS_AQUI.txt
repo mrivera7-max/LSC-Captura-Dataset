@@ -1,0 +1,17 @@
+En esta carpeta deben ir los dos modelos de MediaPipe:
+
+  hand_landmarker.task   (~7.8 MB)
+  face_landmarker.task   (~3.7 MB)
+
+NO vienen en el ZIP porque pesan mucho. Hay dos formas de ponerlos:
+
+OPCION A - Copiarlos desde el proyecto LSC-Mafe (si los tienes):
+  Copia los dos .task desde  LSC-Mafe\data\  a esta carpeta.
+
+OPCION B - Descargarlos (necesita internet). Abre una terminal en esta
+carpeta y ejecuta:
+
+  curl -o hand_landmarker.task https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task
+  curl -o face_landmarker.task https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task
+
+Sin estos dos archivos, el capturador NO arranca.
