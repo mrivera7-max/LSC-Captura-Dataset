@@ -1,8 +1,10 @@
-# Capturador de Señas LSC — UDI 2026 (versión secuencias)
+# Capturador de Señas LSC — UDI 2026 (versión DUAL: secuencias + imágenes)
 
 Software para capturar señas y ampliar la base de datos del proyecto de
-Lengua de Señas Colombiana. **Esta versión captura secuencias de movimiento**
-(no fotos), que es lo que el modelo de reconocimiento necesita.
+Lengua de Señas Colombiana. **Cada secuencia guarda a la vez las características
+(.npy) y las imágenes (.jpg) del mismo movimiento**, para poder comparar modelos
+basados en puntos anatómicos (Random Forest, MLP) y en imágenes (MobileNetV2)
+con exactamente las mismas muestras.
 
 ## ⚠️ Antes de empezar: coloca los modelos
 
@@ -53,7 +55,10 @@ Sobre la opción **Mano**:
 - `sin_manos`: para señas que solo usan la cabeza. Graba aunque no haya manos.
 
 ### Durante la captura
-- Mantén la seña de forma natural durante cada ráfaga (verás «GRABANDO»).
+- **Deben verse la mano y el rostro completos.** En pantalla aparecen «Mano OK» y
+  «Rostro OK»; el rostro es necesario para señas cerca de la cara (silencio, gracias).
+- Haz la seña de forma natural, **con su movimiento**, durante cada ráfaga (verás «GRABANDO»).
+- Si la mano se ve en menos de 8 frames, la secuencia se descarta y se repite.
 - No cambies de seña a mitad.
 - Espera a que el contador llegue al número indicado.
 - Al final, el programa pregunta si quedó bien: Sí conserva, No borra y repite.
@@ -67,12 +72,18 @@ dataset_lsc/
 └── hola/
     └── E01_P001/
         └── sesion_01/
-            ├── hola_E01_P001_s01_derecha_luzbuena_fondoclaro_001.npy
+            ├── hola_E01_P001_s01_derecha_luzbuena_fondoclaro_001.npy          (342 características)
+            ├── hola_E01_P001_s01_derecha_luzbuena_fondoclaro_001_frames.npy   (características por frame)
+            ├── hola_E01_P001_s01_derecha_luzbuena_fondoclaro_001/             (imágenes de esa secuencia)
+            │   ├── 000.jpg
+            │   └── ...
             ├── ...
             └── metadata.csv
 ```
 
-Los archivos son **.npy** (secuencias de características), no imágenes.
+Solo se guardan los frames donde se detectó la mano; el .npy y las imágenes
+provienen de esos mismos frames. Espacio aproximado: 0,4–0,6 MB por secuencia
+(≈ 100 MB por participante con 7 señas × 30 secuencias).
 
 ## Qué entregar
 

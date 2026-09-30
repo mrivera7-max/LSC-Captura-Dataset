@@ -26,11 +26,13 @@ except Exception as _e:
 
 # =====================================================
 # SOFTWARE DE CAPTURA DATASET LSC - UDI
-# Versión GUI — captura SECUENCIAS (.npy de features), no fotos.
-# Compatible con el modelo v2 (mano + cara).
-# - Ventana inicial para ingresar toda la información
-# - Captura ráfagas de ~20 frames y guarda el vector de features
-# - Conserva metadatos: estudiante, participante, sesión, mano, luz, fondo
+# Versión GUI DUAL — cada secuencia guarda, de los MISMOS frames:
+#   * <base>_NNN.npy          vector agregado de 342 features (modelo v2, RF, MLP)
+#   * <base>_NNN_frames.npy   features por frame (N, 152)
+#   * <base>_NNN/000.jpg ...  los frames RGB (MobileNetV2)
+# Así los tres modelos de la comparación ven exactamente las mismas muestras.
+# Solo se usan los frames con mano detectada (igual que el reconocedor en vivo).
+# Conserva metadatos: estudiante, participante, sesión, mano, luz, fondo
 # =====================================================
 
 DATASET_DIR = Path("dataset_lsc")
@@ -42,6 +44,38 @@ FONDOS_VALIDOS = ["claro", "oscuro", "cotidiano"]
 # secuencias completas, así que el número razonable es mucho menor).
 SECUENCIAS_POR_DEFECTO = 30
 DURACION_SECUENCIA_S = 0.7  # duración de cada ráfaga, igual que capturar_secuencias
+MIN_FRAMES_MANO = 8         # secuencias con menos frames con mano se descartan y se repiten
+ANCHO_JPG = 640             # ancho de las imágenes guardadas (MobileNetV2 usa 224 px de alto)
+CALIDAD_JPG = 85
+
+
+def vector_frame(ff) -> np.ndarray:
+    """Features de un frame: mano_der(63) + mano_izq(63) + boca(24) + dist(1) + cara(1) = 152."""
+    return np.concatenate([ff.mano_der, ff.mano_izq, ff.boca,
+                           [ff.dist_mano_boca], [float(ff.cara_presente)]])
+
+
+def guardar_secuencia_dual(ruta_salida: Path, nombre_base: str, extractor, tomas) -> dict:
+    """tomas: [(frame_bgr, FrameFeatures, t_mediapipe_ms)] de UNA secuencia.
+    Guarda npy agregado + npy por frame + jpg de los mismos frames."""
+    feats = [ff for _, ff, _ in tomas]
+    ruta_npy = ruta_salida / f"{nombre_base}.npy"
+    np.save(ruta_npy, extractor.agregar_secuencia(feats))
+    np.save(ruta_salida / f"{nombre_base}_frames.npy", np.stack([vector_frame(f) for f in feats]))
+    carpeta = ruta_salida / nombre_base
+    carpeta.mkdir(parents=True, exist_ok=True)
+    for i, (frame, _, _) in enumerate(tomas):
+        h, w = frame.shape[:2]
+        if w > ANCHO_JPG:
+            frame = cv2.resize(frame, (ANCHO_JPG, int(round(h * ANCHO_JPG / w))), interpolation=cv2.INTER_AREA)
+        cv2.imwrite(str(carpeta / f"{i:03d}.jpg"), frame, [cv2.IMWRITE_JPEG_QUALITY, CALIDAD_JPG])
+    return {
+        "ruta_npy": ruta_npy,
+        "carpeta_frames": carpeta,
+        "n_frames": len(tomas),
+        "cara_frac": float(np.mean([f.cara_presente for f in feats])) if feats else 0.0,
+        "t_mp_ms": float(np.mean([t for _, _, t in tomas])) if tomas else 0.0,
+    }
 
 
 def limpiar_texto(texto: str) -> str:
@@ -81,7 +115,10 @@ def crear_metadata_si_no_existe(metadata_path: Path):
                 "frames_usados",
                 "manos_detectadas",
                 "fecha",
-                "ruta"
+                "ruta",
+                "carpeta_frames",
+                "rostro_frac",
+                "t_mediapipe_ms"
             ])
 
 
@@ -125,7 +162,7 @@ class CapturaApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Captura Dataset LSC - UDI")
-        self.root.geometry("720x560")
+        self.root.geometry("760x600")
         self.root.resizable(False, False)
 
         self.capturando = False
@@ -137,7 +174,7 @@ class CapturaApp:
     def crear_interfaz(self):
         titulo = ttk.Label(
             self.root,
-            text="Software de Captura de Imágenes - Dataset LSC",
+            text="Captura Dual (secuencias + imágenes) - Dataset LSC",
             font=("Arial", 16, "bold")
         )
         titulo.pack(pady=12)
@@ -193,7 +230,8 @@ class CapturaApp:
             "Indicaciones:\n"
             "1. Escriba la seña sin tildes preferiblemente. Ej: si, hola, gracias.\n"
             "2. No use nombres reales de participantes. Use códigos: P001, P002...\n"
-            "3. La cámara abrirá una ventana externa. Mantenga la seña estable.\n"
+            "3. Se deben ver la MANO y el ROSTRO completos (el rostro es necesario para Silencio y Gracias).\n"
+            "   Realice la seña de forma natural, con su movimiento, en cada ráfaga (GRABANDO).\n"
             "4. Al finalizar podrá aceptar la captura o repetirla si quedó mal."
         )
         ttk.Label(self.root, text=instrucciones, justify="left").pack(padx=20, pady=10, anchor="w")
@@ -361,10 +399,13 @@ class CapturaApp:
         # Bucle principal: cada iteración graba UNA secuencia completa.
         while contador < objetivo:
             # --- Grabar una ráfaga de ~VENTANA_FRAMES frames durante DURACION_SECUENCIA_S ---
-            frames_features = []
+            tomas = []          # (frame, features, t_mediapipe_ms) de los frames válidos
+            n_frames_total = 0
             t_inicio_seq = time.time()
             cancelado = False
             manos_vistas = False
+            cara_vista = False
+            ff = None
 
             while time.time() - t_inicio_seq < DURACION_SECUENCIA_S:
                 ret, frame = cap.read()
@@ -372,11 +413,18 @@ class CapturaApp:
                     break
                 frame = cv2.flip(frame, 1)
                 ts_ms = int((time.time() - t_global) * 1000)
+                t_mp = time.perf_counter()
                 ff = extractor.procesar_frame(frame, ts_ms)
+                t_mp = (time.perf_counter() - t_mp) * 1000
                 if ff is not None:
-                    frames_features.append(ff)
+                    n_frames_total += 1
                     if ff.manos_presentes:
                         manos_vistas = True
+                    if ff.cara_presente:
+                        cara_vista = True
+                    # Solo frames con mano (como el reconocedor en vivo); "sin_manos" guarda todos
+                    if ff.manos_presentes or not exige_manos:
+                        tomas.append((frame.copy(), ff, t_mp))
 
                 # Overlay
                 disp = frame.copy()
@@ -387,6 +435,13 @@ class CapturaApp:
                 cv2.putText(disp, "GRABANDO", (20, 105),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
                 cv2.circle(disp, (disp.shape[1] - 40, 40), 12, (0, 0, 255), -1)
+                if ff is not None:
+                    cv2.putText(disp, "Mano OK" if ff.manos_presentes else "Sin mano",
+                                (disp.shape[1] - 200, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                                (0, 200, 0) if ff.manos_presentes else (0, 100, 255), 2)
+                    cv2.putText(disp, "Rostro OK" if ff.cara_presente else "Sin rostro",
+                                (disp.shape[1] - 200, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
+                                (0, 200, 0) if ff.cara_presente else (0, 100, 255), 2)
                 cv2.imshow("Capturador Dataset LSC", disp)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     cancelado = True
@@ -396,28 +451,28 @@ class CapturaApp:
                 break
 
             # --- Validar la secuencia ---
-            if len(frames_features) < 5:
+            if n_frames_total < 5 or not tomas:
                 # Muy pocos frames: descartar y reintentar sin sumar al contador
                 continue
-            if exige_manos and not manos_vistas:
+            if exige_manos and len(tomas) < MIN_FRAMES_MANO:
                 # La seña debería tener manos pero no se vieron: descartar
                 # (para "sin_manos" esto no aplica y sí se guarda)
                 disp = frame.copy()
-                cv2.putText(disp, "No se vieron manos, repite", (20, 140),
+                cv2.putText(disp, f"Mano en {len(tomas)} frames (min {MIN_FRAMES_MANO}), repite", (20, 140),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
                 cv2.imshow("Capturador Dataset LSC", disp)
                 cv2.waitKey(400)
                 continue
 
-            # --- Guardar el vector de la secuencia ---
-            vector = extractor.agregar_secuencia(frames_features)
+            # --- Guardar la secuencia (npy + frames de la MISMA toma) ---
             contador += 1
-            nombre_archivo = (
+            nombre_base = (
                 f"{datos['sena']}_{id_participante}_{sesion_txt}_"
-                f"{datos['mano']}_luz{datos['iluminacion']}_fondo{datos['fondo']}_{contador:03d}.npy"
+                f"{datos['mano']}_luz{datos['iluminacion']}_fondo{datos['fondo']}_{contador:03d}"
             )
-            ruta_npy = ruta_salida / nombre_archivo
-            np.save(ruta_npy, vector)
+            info = guardar_secuencia_dual(ruta_salida, nombre_base, extractor, tomas)
+            nombre_archivo = f"{nombre_base}.npy"
+            ruta_npy = info["ruta_npy"]
 
             fila_metadata = [
                 nombre_archivo,
@@ -428,10 +483,13 @@ class CapturaApp:
                 datos["mano"],
                 datos["iluminacion"],
                 datos["fondo"],
-                len(frames_features),
+                info["n_frames"],
                 "si" if manos_vistas else "no",
                 datetime.now().isoformat(),
-                str(ruta_npy)
+                str(ruta_npy),
+                info["carpeta_frames"].name,
+                f"{info['cara_frac']:.2f}",
+                f"{info['t_mp_ms']:.1f}"
             ]
             guardar_metadata(metadata_path, fila_metadata)
             guardar_metadata(metadata_global_path, fila_metadata)
@@ -444,8 +502,11 @@ class CapturaApp:
                     break
                 frame = cv2.flip(frame, 1)
                 disp = frame.copy()
-                cv2.putText(disp, f"Guardada {contador}/{objetivo} - prepara la siguiente", (20, 35),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                cv2.putText(disp, f"Guardada {contador}/{objetivo} ({info['n_frames']} frames) - prepara la siguiente",
+                            (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                if exige_manos and not cara_vista:
+                    cv2.putText(disp, "AVISO: no se vio el rostro", (20, 70),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
                 cv2.imshow("Capturador Dataset LSC", disp)
                 if cv2.waitKey(1) & 0xFF == ord("q"):
                     cancelado = True
@@ -464,7 +525,7 @@ class CapturaApp:
 
         quedo_bien = messagebox.askyesno(
             "Validar captura",
-            f"Se guardaron {contador} secuencias en:\n{ruta_salida}\n\n"
+            f"Se guardaron {contador} secuencias (npy + imágenes) en:\n{ruta_salida}\n\n"
             "¿La captura quedó bien?\n\n"
             "Sí: conservar captura.\n"
             "No: borrar y repetir con los mismos datos."
