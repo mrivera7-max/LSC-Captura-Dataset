@@ -162,14 +162,14 @@ class CapturaApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Captura Dataset LSC - UDI")
-        self.root.geometry("760x600")
-        self.root.resizable(False, False)
+        self.root.resizable(True, True)
 
         self.capturando = False
         self.cancelar = False
         self.datos_actuales = None
 
         self.crear_interfaz()
+        self.ajustar_ventana()
 
     def crear_interfaz(self):
         titulo = ttk.Label(
@@ -177,7 +177,7 @@ class CapturaApp:
             text="Captura Dual (secuencias + imágenes) - Dataset LSC",
             font=("Arial", 16, "bold")
         )
-        titulo.pack(pady=12)
+        titulo.pack(pady=(10, 2))
 
         subtitulo = ttk.Label(
             self.root,
@@ -187,7 +187,7 @@ class CapturaApp:
         subtitulo.pack(pady=2)
 
         frame = ttk.LabelFrame(self.root, text="Información de captura")
-        frame.pack(padx=20, pady=15, fill="x")
+        frame.pack(padx=20, pady=(8, 6), fill="x")
 
         self.var_sena = tk.StringVar()
         self.var_estudiante = tk.StringVar(value="E01")
@@ -198,24 +198,24 @@ class CapturaApp:
         self.var_fondo = tk.StringVar(value="claro")
         self.var_cantidad = tk.StringVar(value=str(SECUENCIAS_POR_DEFECTO))
 
-        self.agregar_campo(frame, "Seña a capturar:", self.var_sena, 0, ejemplo="Ej: hola, gracias, buenos_dias")
+        self.agregar_campo(frame, "Seña a capturar:", self.var_sena, 0, ejemplo="Ej: hola, gracias, silencio")
         self.agregar_campo(frame, "Código estudiante:", self.var_estudiante, 1, ejemplo="Ej: E01")
         self.agregar_campo(frame, "Código participante:", self.var_participante, 2, ejemplo="Ej: P001")
         self.agregar_campo(frame, "Sesión:", self.var_sesion, 3, ejemplo="Ej: 01")
 
-        ttk.Label(frame, text="Mano:").grid(row=4, column=0, padx=10, pady=8, sticky="e")
-        ttk.Combobox(frame, textvariable=self.var_mano, values=MANOS_VALIDAS, state="readonly", width=28).grid(row=4, column=1, padx=10, pady=8, sticky="w")
+        ttk.Label(frame, text="Mano:").grid(row=4, column=0, padx=10, pady=4, sticky="e")
+        ttk.Combobox(frame, textvariable=self.var_mano, values=MANOS_VALIDAS, state="readonly", width=28).grid(row=4, column=1, padx=10, pady=4, sticky="w")
 
-        ttk.Label(frame, text="Iluminación:").grid(row=5, column=0, padx=10, pady=8, sticky="e")
-        ttk.Combobox(frame, textvariable=self.var_iluminacion, values=ILUMINACION_VALIDA, state="readonly", width=28).grid(row=5, column=1, padx=10, pady=8, sticky="w")
+        ttk.Label(frame, text="Iluminación:").grid(row=5, column=0, padx=10, pady=4, sticky="e")
+        ttk.Combobox(frame, textvariable=self.var_iluminacion, values=ILUMINACION_VALIDA, state="readonly", width=28).grid(row=5, column=1, padx=10, pady=4, sticky="w")
 
-        ttk.Label(frame, text="Fondo:").grid(row=6, column=0, padx=10, pady=8, sticky="e")
-        ttk.Combobox(frame, textvariable=self.var_fondo, values=FONDOS_VALIDOS, state="readonly", width=28).grid(row=6, column=1, padx=10, pady=8, sticky="w")
+        ttk.Label(frame, text="Fondo:").grid(row=6, column=0, padx=10, pady=4, sticky="e")
+        ttk.Combobox(frame, textvariable=self.var_fondo, values=FONDOS_VALIDOS, state="readonly", width=28).grid(row=6, column=1, padx=10, pady=4, sticky="w")
 
         self.agregar_campo(frame, "Cantidad de secuencias:", self.var_cantidad, 7, ejemplo="Recomendado: 30")
 
         frame_botones = ttk.Frame(self.root)
-        frame_botones.pack(pady=10)
+        frame_botones.pack(pady=6)
 
         self.btn_iniciar = ttk.Button(frame_botones, text="Iniciar captura", command=self.iniciar_captura)
         self.btn_iniciar.grid(row=0, column=0, padx=8)
@@ -224,24 +224,36 @@ class CapturaApp:
         self.btn_salir.grid(row=0, column=1, padx=8)
 
         self.estado = tk.StringVar(value="Estado: esperando información de captura")
-        ttk.Label(self.root, textvariable=self.estado, font=("Arial", 10, "bold")).pack(pady=10)
+        ttk.Label(self.root, textvariable=self.estado, font=("Arial", 10, "bold")).pack(pady=(4, 6))
 
         instrucciones = (
-            "Indicaciones:\n"
-            "1. Escriba la seña sin tildes preferiblemente. Ej: si, hola, gracias.\n"
+            "1. Seña en minúscula y sin tildes: hola, gracias, si, no, bien, mal, silencio.\n"
             "2. No use nombres reales de participantes. Use códigos: P001, P002...\n"
-            "3. Se deben ver la MANO y el ROSTRO completos (el rostro es necesario para Silencio y Gracias).\n"
-            "   Realice la seña de forma natural, con su movimiento, en cada ráfaga (GRABANDO).\n"
-            "4. Al finalizar podrá aceptar la captura o repetirla si quedó mal."
+            "3. Deben verse la MANO y el ROSTRO completos (el rostro es necesario para silencio y gracias).\n"
+            "4. Haga la seña completa, con su movimiento natural, en cada ráfaga (GRABANDO).\n"
+            "5. Al finalizar podrá aceptar la captura o repetirla si quedó mal. Q cancela la captura."
         )
-        ttk.Label(self.root, text=instrucciones, justify="left").pack(padx=20, pady=10, anchor="w")
+        marco = ttk.LabelFrame(self.root, text="Indicaciones")
+        marco.pack(padx=20, pady=(0, 12), fill="x")
+        ttk.Label(marco, text=instrucciones, justify="left", wraplength=680).pack(padx=10, pady=6, anchor="w")
+
+    def ajustar_ventana(self):
+        """Tamaño según el contenido (evita que se corte con escalado de pantalla 125 %/150 %)
+        y ventana centrada; si la pantalla es baja, se limita a su alto."""
+        self.root.update_idletasks()
+        ancho = self.root.winfo_reqwidth()
+        alto = min(self.root.winfo_reqheight(), self.root.winfo_screenheight() - 80)
+        x = max(0, (self.root.winfo_screenwidth() - ancho) // 2)
+        y = max(0, (self.root.winfo_screenheight() - alto) // 2 - 20)
+        self.root.geometry(f"{ancho}x{alto}+{x}+{y}")
+        self.root.minsize(ancho, min(alto, 520))
 
     def agregar_campo(self, frame, etiqueta, variable, fila, ejemplo=""):
-        ttk.Label(frame, text=etiqueta).grid(row=fila, column=0, padx=10, pady=8, sticky="e")
+        ttk.Label(frame, text=etiqueta).grid(row=fila, column=0, padx=10, pady=4, sticky="e")
         entrada = ttk.Entry(frame, textvariable=variable, width=31)
-        entrada.grid(row=fila, column=1, padx=10, pady=8, sticky="w")
+        entrada.grid(row=fila, column=1, padx=10, pady=4, sticky="w")
         if ejemplo:
-            ttk.Label(frame, text=ejemplo, foreground="gray").grid(row=fila, column=2, padx=6, pady=8, sticky="w")
+            ttk.Label(frame, text=ejemplo, foreground="gray").grid(row=fila, column=2, padx=6, pady=4, sticky="w")
 
     def validar_datos(self):
         sena = limpiar_texto(self.var_sena.get())
