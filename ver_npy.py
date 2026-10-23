@@ -115,6 +115,13 @@ def ver_archivo(ruta):
     exportar_csv(arr, ruta.with_suffix(".csv"))
     if arr.ndim == 2 and arr.shape[1] == 152:
         vista_frames(ruta, arr)
+    elif arr.ndim == 1 and arr.size == 342:
+        hermano = ruta.with_name(ruta.stem + "_frames.npy")
+        if hermano.exists():
+            print(f"\nAbriendo los frames de esta secuencia: {hermano.name}")
+            ver_archivo(hermano)
+        else:
+            print("No se encontró el *_frames.npy de esta secuencia (captura de versión anterior).")
 
 
 def ver_carpeta(carpeta):
