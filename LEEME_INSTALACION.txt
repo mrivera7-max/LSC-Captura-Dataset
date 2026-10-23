@@ -1,0 +1,40 @@
+CAPTURADOR DATASET LSC - UDI (version 3, oct 2026)
+====================================================
+
+INSTALACION (la hace el docente UNA sola vez por PC)
+1. Instalar Python 3.11 desde python.org.
+   IMPORTANTE: marcar la casilla 'Add Python to PATH'.
+2. Descomprimir esta carpeta en C:\LSC-Captura-Dataset
+   (ruta corta, sin tildes ni espacios; NO dejarla dentro del .zip ni en OneDrive).
+3. Doble clic en ejecutar_windows.bat con internet.
+   La primera vez crea el entorno e instala librerias (5-10 min).
+4. Cuando abra la ventana del capturador, haga una prueba de 3 secuencias
+   y verifique en pantalla que la camara entrega 15 fps o mas.
+5. Crear acceso directo de ejecutar_windows.bat en el Escritorio
+   (clic derecho > Enviar a > Escritorio).
+
+USO (estudiantes)
+- Doble clic en el acceso directo. Ya no necesita internet.
+- Llenar los datos, Iniciar captura.
+- POSICION INICIAL: manos abajo.  GRABANDO: hacer la sena COMPLETA.
+- Tecla Q cancela.
+- Los datos quedan en C:\LSC-Captura-Dataset\dataset_lsc
+
+REVISAR UNA SECUENCIA
+- Opcion grafica (recomendada): doble clic en visor_npy.html (abre en el navegador)
+  y arrastrar la carpeta de la sesion. Muestra la mano animada, las fotos y las curvas.
+- Arrastrar un archivo *_frames.npy (o la carpeta de la sesion) sobre ver_npy.bat.
+- Genera un .csv (Excel) y una imagen *_vista.png con los frames y la mano.
+
+GUIA COMPLETA PARA ESTUDIANTES
+- docs\Runbook_Captura_Dataset_LSC_v3.pdf
+
+ENTREGA
+- Comprimir la carpeta dataset_lsc completa y entregarla al docente.
+- Incluir los consentimientos firmados (Ley 1581 de 2012).
+
+PROBLEMAS FRECUENTES
+- 'No se encontro Python': reinstalar marcando 'Add Python to PATH'.
+- Falla la instalacion de librerias: borrar la carpeta venv y volver a ejecutar con internet.
+- 'No se pudo abrir la camara': cerrar Zoom/Meet/Teams u otra app que la use.
+- Aviso 'camara lenta': mejorar la luz del lugar.

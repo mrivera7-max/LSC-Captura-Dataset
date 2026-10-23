@@ -124,3 +124,7 @@ o en Windows arrastre el `.npy` (o la carpeta de la sesión) sobre **ver_npy.bat
 - `.csv` con nombres de columna (abre en Excel, separador `;`),
 - `<base>_vista.png`: cada frame .jpg junto al esqueleto de la mano,
 - con una carpeta: tabla de secuencias con frames, % mano y % rostro.
+
+## Visor gráfico
+
+Abrir `visor_npy.html` en el navegador y arrastrar la carpeta de una sesión: mano animada, imágenes y curvas (índice, distancia a la boca, movimiento, presencia). Funciona sin internet.
