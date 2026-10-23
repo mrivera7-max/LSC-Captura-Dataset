@@ -43,8 +43,15 @@ FONDOS_VALIDOS = ["claro", "oscuro", "cotidiano"]
 # Cuántas secuencias grabar por defecto (antes eran 100 fotos; ahora son
 # secuencias completas, así que el número razonable es mucho menor).
 SECUENCIAS_POR_DEFECTO = 30
-DURACION_SECUENCIA_S = 0.7  # duración de cada ráfaga, igual que capturar_secuencias
+# v3: la ráfaga de 0,7 s solo alcanzaba el inicio y el final de la seña.
+# Ahora se graba la seña COMPLETA (2 s por defecto, editable en la GUI),
+# a la tasa nativa de la cámara (sin MediaPipe dentro del bucle de grabación)
+# y luego se remuestrea a N_FRAMES_SECUENCIA frames equiespaciados en el tiempo.
+DURACION_SECUENCIA_S = 2.0  # duración por defecto de cada seña
+CUENTA_REGRESIVA_S = 1.5    # tiempo para volver a la posición inicial antes de cada seña
+N_FRAMES_SECUENCIA = 20     # frames guardados por secuencia (equiespaciados)
 MIN_FRAMES_MANO = 8         # secuencias con menos frames con mano se descartan y se repiten
+ANCHO_PROCESO = 640         # ancho al que se reduce el frame (MediaPipe usa coordenadas normalizadas)
 ANCHO_JPG = 640             # ancho de las imágenes guardadas (MobileNetV2 usa 224 px de alto)
 CALIDAD_JPG = 85
 
@@ -76,6 +83,38 @@ def guardar_secuencia_dual(ruta_salida: Path, nombre_base: str, extractor, tomas
         "cara_frac": float(np.mean([f.cara_presente for f in feats])) if feats else 0.0,
         "t_mp_ms": float(np.mean([t for _, _, t in tomas])) if tomas else 0.0,
     }
+
+
+def reducir(frame, ancho=ANCHO_PROCESO):
+    h, w = frame.shape[:2]
+    if w <= ancho:
+        return frame
+    return cv2.resize(frame, (ancho, int(round(h * ancho / w))), interpolation=cv2.INTER_AREA)
+
+
+def indices_equiespaciados(n_total: int, n_objetivo: int) -> list:
+    """Índices uniformes en [0, n_total-1]; si hay menos frames que el objetivo, se usan todos."""
+    if n_total <= n_objetivo:
+        return list(range(n_total))
+    return [int(round(i)) for i in np.linspace(0, n_total - 1, n_objetivo)]
+
+
+def abrir_camara(indice=0):
+    """En Windows DirectShow + MJPG permite 30 fps a 1280x720; con el backend
+    por defecto muchas webcams caen a 5-10 fps (frames muy espaciados)."""
+    if os.name == "nt":
+        cap = cv2.VideoCapture(indice, cv2.CAP_DSHOW)
+        if not cap.isOpened():
+            cap = cv2.VideoCapture(indice)
+    else:
+        cap = cv2.VideoCapture(indice)
+    if cap.isOpened():
+        cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        cap.set(cv2.CAP_PROP_FPS, 30)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    return cap
 
 
 def limpiar_texto(texto: str) -> str:
@@ -197,6 +236,7 @@ class CapturaApp:
         self.var_iluminacion = tk.StringVar(value="buena")
         self.var_fondo = tk.StringVar(value="claro")
         self.var_cantidad = tk.StringVar(value=str(SECUENCIAS_POR_DEFECTO))
+        self.var_duracion = tk.StringVar(value=str(DURACION_SECUENCIA_S))
 
         self.agregar_campo(frame, "Seña a capturar:", self.var_sena, 0, ejemplo="Ej: hola, gracias, silencio")
         self.agregar_campo(frame, "Código estudiante:", self.var_estudiante, 1, ejemplo="Ej: E01")
@@ -213,6 +253,7 @@ class CapturaApp:
         ttk.Combobox(frame, textvariable=self.var_fondo, values=FONDOS_VALIDOS, state="readonly", width=28).grid(row=6, column=1, padx=10, pady=4, sticky="w")
 
         self.agregar_campo(frame, "Cantidad de secuencias:", self.var_cantidad, 7, ejemplo="Recomendado: 30")
+        self.agregar_campo(frame, "Duración de la seña (s):", self.var_duracion, 8, ejemplo="1.0 a 4.0 — debe cubrir la seña completa")
 
         frame_botones = ttk.Frame(self.root)
         frame_botones.pack(pady=6)
@@ -230,7 +271,7 @@ class CapturaApp:
             "1. Seña en minúscula y sin tildes: hola, gracias, si, no, bien, mal, silencio.\n"
             "2. No use nombres reales de participantes. Use códigos: P001, P002...\n"
             "3. Deben verse la MANO y el ROSTRO completos (el rostro es necesario para silencio y gracias).\n"
-            "4. Haga la seña completa, con su movimiento natural, en cada ráfaga (GRABANDO).\n"
+            "4. En 'POSICIÓN INICIAL' baje las manos; en 'GRABANDO' haga la seña COMPLETA de principio a fin.\n"
             "5. Al finalizar podrá aceptar la captura o repetirla si quedó mal. Q cancela la captura."
         )
         marco = ttk.LabelFrame(self.root, text="Indicaciones")
@@ -267,11 +308,20 @@ class CapturaApp:
         try:
             cantidad = int(self.var_cantidad.get())
         except ValueError:
-            messagebox.showerror("Error", "La cantidad de imágenes debe ser un número entero.")
+            messagebox.showerror("Error", "La cantidad de secuencias debe ser un número entero.")
             return None
 
         if cantidad <= 0:
-            messagebox.showerror("Error", "La cantidad de imágenes debe ser mayor que cero.")
+            messagebox.showerror("Error", "La cantidad de secuencias debe ser mayor que cero.")
+            return None
+
+        try:
+            duracion = float(self.var_duracion.get().replace(",", "."))
+        except ValueError:
+            messagebox.showerror("Error", "La duración debe ser un número (ej: 2.0).")
+            return None
+        if not 1.0 <= duracion <= 4.0:
+            messagebox.showerror("Error", "La duración debe estar entre 1.0 y 4.0 segundos.")
             return None
 
         if not sena:
@@ -293,6 +343,7 @@ class CapturaApp:
             "iluminacion": iluminacion,
             "fondo": fondo,
             "cantidad": cantidad,
+            "duracion": duracion,
         }
 
     def iniciar_captura(self):
@@ -326,7 +377,8 @@ class CapturaApp:
             f"Mano: {datos['mano']}\n"
             f"Iluminación: {datos['iluminacion']}\n"
             f"Fondo: {datos['fondo']}\n"
-            f"Cantidad: {datos['cantidad']}\n\n"
+            f"Cantidad: {datos['cantidad']}\n"
+            f"Duración por seña: {datos['duracion']:.1f} s\n\n"
             "¿Desea iniciar la captura?"
         )
 
@@ -373,7 +425,7 @@ class CapturaApp:
             self.root.after(0, lambda: self.estado.set("Estado: error de modelos"))
             return
 
-        cap = cv2.VideoCapture(0)
+        cap = abrir_camara(0)
         if not cap.isOpened():
             extractor.detener()
             self.root.after(0, lambda: messagebox.showerror("Error", "No se pudo abrir la cámara."))
@@ -381,14 +433,27 @@ class CapturaApp:
             self.root.after(0, lambda: self.estado.set("Estado: error de cámara"))
             return
 
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-
         # ¿Esta seña usa manos? Para "sin_manos" NO exigimos manos presentes.
         exige_manos = datos["mano"] != "sin_manos"
+        duracion = datos.get("duracion", DURACION_SECUENCIA_S)
         t_global = time.time()
+        ventana = "Capturador Dataset LSC"
 
-        # Vista previa y cuenta regresiva
+        def mostrar(img, lineas, punto_rojo=False):
+            disp = reducir(img, 960).copy()
+            for i, (txt, color) in enumerate(lineas):
+                cv2.putText(disp, txt, (20, 35 + 35 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+            if punto_rojo:
+                cv2.circle(disp, (disp.shape[1] - 40, 40), 12, (0, 0, 255), -1)
+            cv2.imshow(ventana, disp)
+            return (cv2.waitKey(1) & 0xFF) == ord("q")
+
+        def cancelar_todo(msg="Estado: captura cancelada"):
+            cap.release(); cv2.destroyAllWindows(); extractor.detener()
+            self.root.after(0, lambda: self.btn_iniciar.config(state="normal"))
+            self.root.after(0, lambda: self.estado.set(msg))
+
+        # Vista previa inicial (3 s)
         inicio_previa = time.time()
         while time.time() - inicio_previa < 3:
             ret, frame = cap.read()
@@ -396,85 +461,85 @@ class CapturaApp:
                 continue
             frame = cv2.flip(frame, 1)
             restante = 3 - int(time.time() - inicio_previa)
-            cv2.putText(frame, f"Prepare la sena: {datos['sena']}", (20, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-            cv2.putText(frame, f"Inicia en {restante}", (20, 85), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 255), 2)
-            cv2.imshow("Capturador Dataset LSC", frame)
-            if cv2.waitKey(1) & 0xFF == ord("q"):
-                cap.release(); cv2.destroyAllWindows(); extractor.detener()
-                self.root.after(0, lambda: self.btn_iniciar.config(state="normal"))
-                self.root.after(0, lambda: self.estado.set("Estado: captura cancelada"))
-                return
+            if mostrar(frame, [(f"Prepare la sena: {datos['sena']}", (255, 255, 255)),
+                               (f"Inicia en {restante}", (0, 255, 255))]):
+                cancelar_todo(); return
 
         contador = 0
         objetivo = datos["cantidad"]
+        fps_medidos = []
 
-        # Bucle principal: cada iteración graba UNA secuencia completa.
+        # Bucle principal: cada iteración graba UNA seña completa.
         while contador < objetivo:
-            # --- Grabar una ráfaga de ~VENTANA_FRAMES frames durante DURACION_SECUENCIA_S ---
-            tomas = []          # (frame, features, t_mediapipe_ms) de los frames válidos
-            n_frames_total = 0
-            t_inicio_seq = time.time()
             cancelado = False
-            manos_vistas = False
-            cara_vista = False
-            ff = None
 
-            while time.time() - t_inicio_seq < DURACION_SECUENCIA_S:
+            # --- 1. Cuenta regresiva: volver a la posición inicial ---
+            t0 = time.time()
+            while time.time() - t0 < CUENTA_REGRESIVA_S:
                 ret, frame = cap.read()
                 if not ret:
-                    break
+                    continue
                 frame = cv2.flip(frame, 1)
-                ts_ms = int((time.time() - t_global) * 1000)
-                t_mp = time.perf_counter()
-                ff = extractor.procesar_frame(frame, ts_ms)
-                t_mp = (time.perf_counter() - t_mp) * 1000
-                if ff is not None:
-                    n_frames_total += 1
-                    if ff.manos_presentes:
-                        manos_vistas = True
-                    if ff.cara_presente:
-                        cara_vista = True
-                    # Solo frames con mano (como el reconocedor en vivo); "sin_manos" guarda todos
-                    if ff.manos_presentes or not exige_manos:
-                        tomas.append((frame.copy(), ff, t_mp))
-
-                # Overlay
-                disp = frame.copy()
-                cv2.putText(disp, f"Sena: {datos['sena']} | {id_participante}", (20, 35),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                cv2.putText(disp, f"Secuencia: {contador+1}/{objetivo}", (20, 70),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-                cv2.putText(disp, "GRABANDO", (20, 105),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-                cv2.circle(disp, (disp.shape[1] - 40, 40), 12, (0, 0, 255), -1)
-                if ff is not None:
-                    cv2.putText(disp, "Mano OK" if ff.manos_presentes else "Sin mano",
-                                (disp.shape[1] - 200, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                                (0, 200, 0) if ff.manos_presentes else (0, 100, 255), 2)
-                    cv2.putText(disp, "Rostro OK" if ff.cara_presente else "Sin rostro",
-                                (disp.shape[1] - 200, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
-                                (0, 200, 0) if ff.cara_presente else (0, 100, 255), 2)
-                cv2.imshow("Capturador Dataset LSC", disp)
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    cancelado = True
-                    break
-
+                falta = CUENTA_REGRESIVA_S - (time.time() - t0)
+                if mostrar(frame, [(f"Secuencia {contador+1}/{objetivo} - POSICION INICIAL", (0, 255, 255)),
+                                   (f"Grabando en {falta:.1f} s", (0, 255, 255))]):
+                    cancelado = True; break
             if cancelado:
                 break
 
-            # --- Validar la secuencia ---
-            if n_frames_total < 5 or not tomas:
-                # Muy pocos frames: descartar y reintentar sin sumar al contador
+            # --- 2. Grabación cruda a la tasa de la cámara (sin MediaPipe en el bucle) ---
+            crudos = []  # (frame_reducido, t_ms)
+            t_inicio_seq = time.time()
+            while time.time() - t_inicio_seq < duracion:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                t_ms = int((time.time() - t_global) * 1000)
+                frame = reducir(cv2.flip(frame, 1))
+                crudos.append((frame, t_ms))
+                avance = (time.time() - t_inicio_seq) / duracion
+                if mostrar(frame, [(f"Sena: {datos['sena']} | {id_participante}", (255, 255, 255)),
+                                   (f"Secuencia: {contador+1}/{objetivo}", (0, 255, 0)),
+                                   (f"GRABANDO {int(avance*100):3d} %  - haga la sena COMPLETA", (0, 0, 255))],
+                           punto_rojo=True):
+                    cancelado = True; break
+            if cancelado:
+                break
+            dur_real = max(time.time() - t_inicio_seq, 1e-3)
+            fps_medidos.append(len(crudos) / dur_real)
+
+            # --- 3. Procesar TODOS los frames con MediaPipe (después de grabar) ---
+            if crudos:
+                mostrar(crudos[-1][0], [("Procesando...", (0, 255, 255))])
+            procesados = []  # (frame, ff, t_mp_ms)
+            manos_vistas = cara_vista = False
+            ult_ts = -1
+            for frame, t_ms in crudos:
+                t_ms = max(t_ms, ult_ts + 1)  # MediaPipe VIDEO exige timestamps crecientes
+                ult_ts = t_ms
+                t_mp = time.perf_counter()
+                ff = extractor.procesar_frame(frame, t_ms)
+                t_mp = (time.perf_counter() - t_mp) * 1000
+                if ff is None:
+                    continue
+                manos_vistas |= ff.manos_presentes
+                cara_vista |= ff.cara_presente
+                if ff.manos_presentes or not exige_manos:
+                    procesados.append((frame, ff, t_mp))
+
+            n_frames_total = len(crudos)
+            if n_frames_total < 5 or not procesados:
                 continue
-            if exige_manos and len(tomas) < MIN_FRAMES_MANO:
-                # La seña debería tener manos pero no se vieron: descartar
-                # (para "sin_manos" esto no aplica y sí se guarda)
-                disp = frame.copy()
-                cv2.putText(disp, f"Mano en {len(tomas)} frames (min {MIN_FRAMES_MANO}), repite", (20, 140),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
-                cv2.imshow("Capturador Dataset LSC", disp)
-                cv2.waitKey(400)
+            if exige_manos and len(procesados) < MIN_FRAMES_MANO:
+                ret, frame = cap.read()
+                if ret:
+                    mostrar(cv2.flip(frame, 1), [(f"Mano en {len(procesados)} frames (min {MIN_FRAMES_MANO}), repite",
+                                                  (0, 165, 255))])
+                    cv2.waitKey(700)
                 continue
+
+            # --- 4. Remuestreo uniforme a N_FRAMES_SECUENCIA (cubre toda la seña) ---
+            tomas = [procesados[i] for i in indices_equiespaciados(len(procesados), N_FRAMES_SECUENCIA)]
 
             # --- Guardar la secuencia (npy + frames de la MISMA toma) ---
             contador += 1
@@ -506,25 +571,18 @@ class CapturaApp:
             guardar_metadata(metadata_path, fila_metadata)
             guardar_metadata(metadata_global_path, fila_metadata)
 
-            # Breve pausa entre secuencias para reposicionar
-            pausa_ini = time.time()
-            while time.time() - pausa_ini < 0.4:
-                ret, frame = cap.read()
-                if not ret:
-                    break
-                frame = cv2.flip(frame, 1)
-                disp = frame.copy()
-                cv2.putText(disp, f"Guardada {contador}/{objetivo} ({info['n_frames']} frames) - prepara la siguiente",
-                            (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            # Aviso breve de guardado (la cuenta regresiva siguiente da tiempo de reposicionar)
+            ret, frame = cap.read()
+            if ret:
+                lineas = [(f"Guardada {contador}/{objetivo} ({info['n_frames']} de {len(procesados)} frames con mano,"
+                           f" {fps_medidos[-1]:.0f} fps)", (0, 255, 0))]
                 if exige_manos and not cara_vista:
-                    cv2.putText(disp, "AVISO: no se vio el rostro", (20, 70),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
-                cv2.imshow("Capturador Dataset LSC", disp)
-                if cv2.waitKey(1) & 0xFF == ord("q"):
-                    cancelado = True
+                    lineas.append(("AVISO: no se vio el rostro", (0, 165, 255)))
+                if fps_medidos[-1] < 15:
+                    lineas.append(("AVISO: camara lenta (<15 fps). Mejore la luz.", (0, 165, 255)))
+                if mostrar(cv2.flip(frame, 1), lineas):
                     break
-            if cancelado:
-                break
+                cv2.waitKey(300)
 
         cap.release()
         cv2.destroyAllWindows()

@@ -103,3 +103,24 @@ los `metadata.csv` y el `metadata_global.csv`.
 
 No modifiques el código. Solo captura y entrega la carpeta `dataset_lsc`.
 La calidad del dataset depende de capturar bien, no rápido.
+
+## Cambios v3 (oct 2026) — captura de la seña completa
+
+- **Antes:** ráfaga de 0,7 s con MediaPipe dentro del bucle → ~12–15 frames muy espaciados y solo inicio/fin de la seña.
+- **Ahora:**
+  1. Cuenta regresiva de 1,5 s (*POSICIÓN INICIAL*) antes de cada secuencia.
+  2. Grabación cruda durante la **duración configurable** (2,0 s por defecto, 1–4 s) a la tasa nativa de la cámara (DirectShow + MJPG en Windows, ~30 fps).
+  3. MediaPipe se aplica **después** de grabar, a todos los frames.
+  4. Se guardan **20 frames equiespaciados** de los que tienen mano (`N_FRAMES_SECUENCIA`), cubriendo toda la seña.
+  5. Aviso en pantalla si la cámara entrega < 15 fps.
+- Formato de salida sin cambios: `<base>.npy` (342), `<base>_frames.npy` (N×152), `<base>/*.jpg`.
+
+## Ver un archivo .npy
+
+```
+python ver_npy.py dataset_lsc\hola\E01_P001\sesion_01\<base>_frames.npy
+```
+o en Windows arrastre el `.npy` (o la carpeta de la sesión) sobre **ver_npy.bat**. Genera:
+- `.csv` con nombres de columna (abre en Excel, separador `;`),
+- `<base>_vista.png`: cada frame .jpg junto al esqueleto de la mano,
+- con una carpeta: tabla de secuencias con frames, % mano y % rostro.
