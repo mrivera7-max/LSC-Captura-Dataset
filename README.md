@@ -128,3 +128,10 @@ o en Windows arrastre el `.npy` (o la carpeta de la sesión) sobre **ver_npy.bat
 ## Visor gráfico
 
 Abrir `visor_npy.html` en el navegador y arrastrar la carpeta de una sesión: mano animada, imágenes y curvas (índice, distancia a la boca, movimiento, presencia). Funciona sin internet.
+
+## Instrumentos y reproducibilidad (v3.0)
+
+- **Versiones fijas** (`requirements.txt`): MediaPipe 1.0.1, OpenCV-contrib 5.0.0.93, NumPy 2.5.3 y Python 3.13, las mismas de [LSC-Mafe-maestria](https://github.com/mrivera7-max/LSC-Mafe-maestria). El instalador de Windows verifica la versión de Python y guarda `venv/entorno_instalado.txt`.
+- **Registro por sesión:** cada carpeta `sesion_NN` incluye `entorno_captura.json` (versiones, cámara y parámetros de captura).
+- **Versión del dataset:** `python manifiesto_dataset.py <dataset_lsc> --version v1` genera `MANIFIESTO_v1.csv/.json` con SHA-256 por archivo y la huella del dataset; `--verificar MANIFIESTO_v1.csv` comprueba que no cambió. La maestría usa el mismo algoritmo de huella en su bitácora.
+- **Documentos** (`docs/`): runbook de captura, hoja de registro de sesión y guía de etiquetado con diccionario de datos.

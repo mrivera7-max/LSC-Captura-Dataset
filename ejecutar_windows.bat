@@ -15,6 +15,10 @@ if not defined PY (
 )
 if not defined PY goto sin_python
 
+rem --- 1b. Verificar version de Python (se requiere 3.12 o 3.13) ---
+%PY% -c "import sys; sys.exit(0 if (3,12) <= sys.version_info[:2] <= (3,13) else 1)"
+if errorlevel 1 goto python_version
+
 rem --- 2. Crear el entorno si no existe o quedo incompleto ---
 if exist "venv\Scripts\python.exe" goto instalar
 echo Creando entorno virtual por primera vez...
@@ -23,12 +27,13 @@ if errorlevel 1 goto error_venv
 
 :instalar
 rem --- 3. Instalar librerias solo la primera vez ---
-if exist "venv\instalado.ok" goto ejecutar
+if exist "venv\instalado_v3.ok" goto ejecutar
 echo Instalando librerias, esto tarda unos minutos...
 "venv\Scripts\python.exe" -m pip install --upgrade pip
 "venv\Scripts\python.exe" -m pip install -r requirements.txt
 if errorlevel 1 goto error_pip
-echo ok> "venv\instalado.ok"
+"venv\Scripts\python.exe" -m pip freeze > "venv\entorno_instalado.txt"
+echo ok> "venv\instalado_v3.ok"
 
 :ejecutar
 rem --- 4. Verificar modelos ---
@@ -43,6 +48,12 @@ goto fin
 
 :sin_python
 echo [ERROR] No se encontro Python. Instalelo marcando "Add Python to PATH" y vuelva a intentar.
+goto fin
+
+:python_version
+echo [ERROR] Se requiere Python 3.13 (o 3.12). Version encontrada:
+%PY% --version
+echo Instale Python 3.13 desde python.org marcando "Add Python to PATH".
 goto fin
 
 :error_venv

@@ -35,6 +35,7 @@ except Exception as _e:
 # Conserva metadatos: estudiante, participante, sesión, mano, luz, fondo
 # =====================================================
 
+VERSION_CAPTURADOR = "3.0"
 DATASET_DIR = Path("dataset_lsc")
 MANOS_VALIDAS = ["derecha", "izquierda", "ambas", "sin_manos"]
 ILUMINACION_VALIDA = ["buena", "media", "baja"]
@@ -115,6 +116,42 @@ def abrir_camara(indice=0):
         cap.set(cv2.CAP_PROP_FPS, 30)
         cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     return cap
+
+
+def registrar_entorno_captura(ruta_salida: Path, datos: dict, cap):
+    """Deja en la carpeta de la sesión las versiones y parámetros con que se capturó."""
+    import json
+    import platform
+    try:
+        import mediapipe as _mp
+        v_mp = _mp.__version__
+    except Exception:
+        v_mp = "no disponible"
+    info = {
+        "capturador": VERSION_CAPTURADOR,
+        "fecha": datetime.now().isoformat(timespec="seconds"),
+        "python": platform.python_version(),
+        "sistema": f"{platform.system()} {platform.release()}",
+        "mediapipe": v_mp,
+        "opencv": cv2.__version__,
+        "numpy": np.__version__,
+        "camara": {
+            "ancho": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+            "alto": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+            "fps_declarado": round(float(cap.get(cv2.CAP_PROP_FPS)), 1),
+        },
+        "parametros": {
+            "duracion_s": datos.get("duracion", DURACION_SECUENCIA_S),
+            "cuenta_regresiva_s": CUENTA_REGRESIVA_S,
+            "frames_por_secuencia": N_FRAMES_SECUENCIA,
+            "min_frames_mano": MIN_FRAMES_MANO,
+            "ancho_proceso": ANCHO_PROCESO,
+        },
+        "sesion": {k: datos[k] for k in ("sena", "estudiante", "participante", "sesion",
+                                          "mano", "iluminacion", "fondo", "cantidad")},
+    }
+    (ruta_salida / "entorno_captura.json").write_text(
+        json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def limpiar_texto(texto: str) -> str:
@@ -213,7 +250,7 @@ class CapturaApp:
     def crear_interfaz(self):
         titulo = ttk.Label(
             self.root,
-            text="Captura Dual (secuencias + imágenes) - Dataset LSC",
+            text="Captura Dual (secuencias + imágenes) - Dataset LSC  v" + VERSION_CAPTURADOR,
             font=("Arial", 16, "bold")
         )
         titulo.pack(pady=(10, 2))
@@ -432,6 +469,11 @@ class CapturaApp:
             self.root.after(0, lambda: self.btn_iniciar.config(state="normal"))
             self.root.after(0, lambda: self.estado.set("Estado: error de cámara"))
             return
+
+        try:
+            registrar_entorno_captura(ruta_salida, datos, cap)
+        except Exception as e:
+            print(f"Aviso: no se pudo registrar el entorno de captura: {e}")
 
         # ¿Esta seña usa manos? Para "sin_manos" NO exigimos manos presentes.
         exige_manos = datos["mano"] != "sin_manos"
