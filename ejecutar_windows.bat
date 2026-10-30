@@ -20,6 +20,13 @@ rem --- 1b. Verificar version de Python (se requiere 3.12 o 3.13) ---
 if errorlevel 1 goto python_version
 
 rem --- 2. Crear el entorno si no existe o quedo incompleto ---
+if exist "venv\Scripts\python.exe" (
+    "venv\Scripts\python.exe" -c "import sys; sys.exit(0 if (3,12) <= sys.version_info[:2] <= (3,13) else 1)"
+    if errorlevel 1 (
+        echo El entorno existente usa otra version de Python. Se recrea...
+        rmdir /s /q venv
+    )
+)
 if exist "venv\Scripts\python.exe" goto instalar
 echo Creando entorno virtual por primera vez...
 %PY% -m venv venv
